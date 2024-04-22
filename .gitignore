@@ -1,4 +1,4 @@
 .env
-.docx
+*.docx
 App idea.docx
 *.env
