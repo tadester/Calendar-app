@@ -2,75 +2,74 @@ const express = require('express');
 const { google } = require('googleapis');
 const session = require('express-session');
 const bodyParser = require('body-parser');
-const Task = require('./TaskModel');
-const calendarAPI = require('./calendar');
-require('dotenv').config({ path: './cal.env'});
 const helmet = require('helmet');
-app.use(helmet());
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
+require('dotenv').config({ path: './cal.env' });
+
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 mongoose.connect('mongodb://localhost/mydatabase', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => console.log("MongoDB connected"))
-  .catch(err => console.log("MongoDB connection error:", err));
-
-// Task model
-const TaskSchema = new mongoose.Schema({
-  title: String,
-  googleEventId: String,
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+}).then(() => {
+    console.log("MongoDB connected");
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}).catch(err => {
+    console.error("MongoDB connection error:", err);
+    process.exit(1);  // Exit process if MongoDB connection fails
 });
-const Task = mongoose.model('Task', TaskSchema);
-//  apply to all requests
-app.use(limiter);
-const app = express();
-const PORT = process.env.PORT;
-
+app.use(bodyParser.json());
+app.use(helmet());
 app.use(session({
-  secret: process.env.SESSION_SECRET,
-  resave: true,
-  saveUninitialized: true
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: true }  // Use secure cookies
+}));
+app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,  // 15 minutes
+    max: 100  // limit each IP to 100 requests per windowMs
 }));
 
 const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.REDIRECT_URI
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.REDIRECT_URI
 );
-// Automatically refresh and store tokens when they expire
+// Token refresh handling
 oauth2Client.on('tokens', (tokens) => {
     if (tokens.refresh_token) {
-      // store the refresh_token in your database!
-      console.log(tokens.refresh_token);
+        console.log("New refresh token:", tokens.refresh_token);
+        // Update the stored refresh token here
     }
-    console.log(tokens.access_token);
-  });
-  
-  // Set credentials including refresh token
-  oauth2Client.setCredentials({
-    refresh_token: "STORED_REFRESH_TOKEN"
-  });
-// Google's OAuth2 URL
+    console.log("New access token:", tokens.access_token);
+});
+
+// OAuth2 Google URL
 app.get('/auth/google', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/calendar', 'profile', 'email']
-  });
-  res.redirect(url);
+    const url = oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: ['https://www.googleapis.com/auth/calendar', 'profile', 'email']
+    });
+    res.redirect(url);
 });
 
+// OAuth2 callback
 app.get('/auth/google/callback', async (req, res) => {
-  const { tokens } = await oauth2Client.getToken(req.query.code);
-  oauth2Client.setCredentials(tokens);
-  req.session.tokens = tokens;
-  res.redirect('/welcome');
+    try {
+        const { tokens } = await oauth2Client.getToken(req.query.code);
+        oauth2Client.setCredentials(tokens);
+        req.session.tokens = tokens;
+        res.redirect('/welcome');
+    } catch (error) {
+        console.error('Error during Google OAuth callback:', error);
+        res.status(500).send('Authentication failed.');
+    }
 });
-
 app.get('/list-events', (req, res) => {
   if (!req.session.tokens) return res.status(401).send('Authentication required');
   oauth2Client.setCredentials(req.session.tokens);
@@ -87,7 +86,7 @@ app.get('/list-events', (req, res) => {
 app.post('/update-token', async (req, res) => {
     const { email, refreshToken } = req.body;
     try {
-      const user = await UserService.storeOrUpdateUser(email, refreshToken);
+      const user = await userservice.storeOrUpdateUser(email, refreshToken);
       res.status(200).json({ message: 'Refresh token updated', user });
     } catch (err) {
       res.status(500).json({ message: 'Failed to update refresh token', error: err.message });
@@ -197,11 +196,62 @@ app.post('/update-token', async (req, res) => {
         res.status(500).send('Failed to delete task.');
     }
 });
+app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
 
+    console.error('Internal Server Error:', err);
 
+    if (err.isOperational) {
+        res.status(err.statusCode).send({ status: 'error', message: err.message });
+    } else {
+        // For unexpected errors, consider logging the stack trace and sending a generic message
+        res.status(500).send({ status: 'error', message: 'An unexpected error occurred!' });
+    }
+});
+// for todo list 
+app.post('/items', async (req, res) => {
+    const { name, duration, dueDate } = req.body;
+
+    if (!name || !duration) {
+        return res.status(400).send('Name and duration are required.');
+    }
+
+    try {
+        const newItem = new Item({
+            name,
+            duration,
+            dueDate: dueDate || undefined  // Use undefined to avoid setting the field if not provided
+        });
+
+        await newItem.save();
+        res.status(201).send({ message: 'Item added successfully', item: newItem });
     } catch (error) {
-        console.error('Error deleting task:', error);
-        res.status(500).send(error);
+        console.error('Failed to add new item:', error);
+        res.status(500).send('Error adding item to the database.');
+    }
+});
+app.get('/items', async (req, res) => {
+    let query = {};
+    const { search, duration, dueDate } = req.query;
+
+    if (search) {
+        query.name = { $regex: search, $options: 'i' };  // Case-insensitive partial match
+    }
+    if (duration) {
+        query.duration = duration;
+    }
+    if (dueDate) {
+        query.dueDate = new Date(dueDate);
+    }
+
+    try {
+        const items = await Item.find(query);
+        res.status(200).json(items);
+    } catch (error) {
+        console.error('Failed to retrieve items:', error);
+        res.status(500).send('Error retrieving items from the database.');
     }
 });
 
