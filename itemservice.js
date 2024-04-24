@@ -7,6 +7,7 @@ const storeOrUpdateItem = async (name, duration , dueDate) => {
         { name: name },
         { duration: duration },
         { dueDate: dueDate },
+        {priority: priority}
         { new: true, upsert: true }
       );
       console.log('Item updated or inserted:', updatedItem);
@@ -25,12 +26,22 @@ const storeOrUpdateItem = async (name, duration , dueDate) => {
       return null;
     }
   };
-  const detDueDate = async (name) => {
+  const getDueDate = async (name) => {
     try {
       const item = await Item.findOne({ name: name });
       return item ? item.dueDate : null;
     } catch (err) {
       console.error('Error retrieving item duedate ', err);
+      return null;
+    }
+  };
+  
+  const getPriority = async (name) => {
+    try {
+      const item = await Item.findOne({ name: name });
+      return item ? item.priority : null;
+    } catch (err) {
+      console.error('Error retrieving item priority ', err);
       return null;
     }
   };

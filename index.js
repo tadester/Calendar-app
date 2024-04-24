@@ -222,7 +222,8 @@ app.post('/items', async (req, res) => {
         const newItem = new Item({
             name,
             duration,
-            dueDate: dueDate || undefined  // Use undefined to avoid setting the field if not provided
+            dueDate: dueDate || undefined, 
+            priority// Use undefined to avoid setting the field if not provided
         });
 
         await newItem.save();
@@ -234,7 +235,7 @@ app.post('/items', async (req, res) => {
 });
 app.get('/items', async (req, res) => {
     let query = {};
-    const { search, duration, dueDate } = req.query;
+    const { search, duration, dueDate,priority } = req.query;
 
     if (search) {
         query.name = { $regex: search, $options: 'i' };  // Case-insensitive partial match
@@ -245,6 +246,9 @@ app.get('/items', async (req, res) => {
     if (dueDate) {
         query.dueDate = new Date(dueDate);
     }
+    if(priority){
+      query.priority = priority;
+    }
 
     try {
         const items = await Item.find(query);
@@ -254,7 +258,73 @@ app.get('/items', async (req, res) => {
         res.status(500).send('Error retrieving items from the database.');
     }
 });
+const scheduleTasks = async () => {
+  const tasks = await Task.find({}).sort({priority: 1, dueDate: 1});  // Sort by priority first
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
 
+  const events = await new Promise((resolve, reject) => {
+      listCalendarEvents(oauth2Client, now, end, (err, items) => {
+          if (err) reject(err);
+          else resolve(items);
+      });
+  });
+
+  const freeSlots = findFreeSlots(events, tasks);
+  return freeSlots;
+};
+const findFreeSlots = (events, tasks) => {
+  let slots = [];
+  let availableSlots = calculateAvailableSlots(events);
+
+  tasks.forEach(task => {
+      for (let i = 0; i < availableSlots.length; i++) {
+          const slot = availableSlots[i];
+          const slotDuration = (slot.end.getTime() - slot.start.getTime()) / 60000; // Duration in minutes
+          if (slotDuration >= task.duration) {
+              const taskStart = new Date(slot.start);
+              const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
+
+              slots.push({
+                  taskName: task.name,
+                  priority: task.priority,
+                  start: taskStart,
+                  end: taskEnd
+              });
+
+              // Update the start time of the current slot to reflect the booked time
+              slot.start = taskEnd;
+              break;  // Found a slot, no need to check further slots for this task
+          }
+      }
+  });
+
+  return slots;
+};
+
+function calculateAvailableSlots(events) {
+  let availableSlots = [];
+  // Calculate slots between events
+  for (let i = 0; i < events.length - 1; i++) {
+      const endCurrent = events[i].end;
+      const startNext = events[i + 1].start;
+      if (endCurrent < startNext) {
+          availableSlots.push({ start: endCurrent, end: startNext });
+      }
+  }
+  // Consider adding slots before the first event and after the last event, as needed
+  return availableSlots;
+}
+
+app.get('/optimize-schedule', async (req, res) => {
+  try {
+      const scheduledTasks = await scheduleTasks();
+      res.json({status: 'success', scheduledTasks});
+  } catch (error) {
+      console.error('Scheduling error:', error);
+      res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
+  }
+});
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

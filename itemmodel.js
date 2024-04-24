@@ -12,6 +12,10 @@ const itemSchema = new mongoose.Schema({
     dueDate: {
         type: Date,
         default: null  // Optional due date
+    },
+    priority: {
+        type: Number,
+        default: 0
     }
 });
 
