@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { View, Text, TextInput, Button, StyleSheet, Modal, ScrollView, TouchableOpacity, Picker } from 'react-native';
+import { View, Text, TextInput, Button, StyleSheet, Modal, ScrollView, Pressable, Picker } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
 function TaskForm({ onSubmit }) {
@@ -17,17 +17,29 @@ function TaskForm({ onSubmit }) {
 
   const fetchTasks = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/'); // Ensure the URL is correct and the server is running
-      setTasks(response.data); // Assuming the response body directly contains the tasks array
+     
+      const response = await axios.get('http://localhost:3000/items');
+      console.log("The URL is correct");
+  
+      if (response.data.length === 0) {
+        console.log("No tasks available.");
+        // Handle the case when there are no tasks available
+        // For example, you can set an empty array to tasks state
+        setTasks([]);
+      } else {
+        // Assuming the response body directly contains the tasks array
+        setTasks(response.data);
+      }
     } catch (error) {
       console.error('Error fetching tasks:', error);
     }
   };
+  
 
   const handleSubmit = async () => {
     const duration = parseInt(hours) * 60 + parseInt(minutes);  // Calculate total duration in minutes
     try {
-      const response = await axios.post('http://localhost:3000/', {
+      const response = await axios.post('http://localhost:3000/items', {
         name: taskName,
         duration,
         type: taskType
@@ -56,10 +68,10 @@ function TaskForm({ onSubmit }) {
           <Text key={index}>{task.name} - {task.type} - Duration: {task.duration} minutes</Text>
         ))}
       </ScrollView>
-      <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.addButton}>
+      <Pressable onPress={() => setModalVisible(true)} style={styles.addButton}>
         <Icon name="plus" size={15} color="#fff" />
         <Text style={styles.addButtonText}>Add Task</Text>
-      </TouchableOpacity>
+      </Pressable>
       <Button title="Optimize Tasks" onPress={onSubmit} />
 
       <Modal
@@ -131,13 +143,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 35,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: {
+    boxShadowColor: "#000",
+    boxShadowOffset: {
       width: 0,
       height: 2
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    boxShadowOpacity: 0.25,
+    boxShadowRadius: 4,
     elevation: 5
   },
   input: {

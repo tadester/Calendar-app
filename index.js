@@ -7,15 +7,18 @@ const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 require('dotenv').config({ path: './cal.env' });
-
+const Item = require('./itemservice');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT ;
 
-mongoose.connect('mongodb://localhost:3000/mydatabase', {
+mongoose.connect('mongodb://localhost:27017/mydatabase', {
     useNewUrlParser: true,
     useUnifiedTopology: true
 }).then(() => {
     console.log("MongoDB connected");
+    app.get('/', (req, res) => {
+      res.send('Welcome to the homepage!');
+    });
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
@@ -253,8 +256,12 @@ app.get('/items', async (req, res) => {
       query.priority = priority;
     }
 
-    try {
+   try {
         const items = await Item.find(query);
+        if (items.length === 0) {
+            // If there are no items, return an empty array
+            return res.status(200).json([]);
+        }
         res.status(200).json(items);
     } catch (error) {
         console.error('Failed to retrieve items:', error);
@@ -327,7 +334,4 @@ app.get('/optimize-schedule', async (req, res) => {
       console.error('Scheduling error:', error);
       res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
   }
-});
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
