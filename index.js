@@ -433,3 +433,4 @@ app.get('/optimize-schedule', async (req, res) => {
         res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
 });
+
