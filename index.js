@@ -7,9 +7,9 @@ const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 require('dotenv').config({ path: './cal.env' });
-const Item = require('./itemservice');
+const Task = require('./itemmodel');  // Corrected the file name
 const app = express();
-const PORT = process.env.PORT ;
+const PORT = process.env.PORT || 3000;
 
 mongoose.connect('mongodb://localhost:27017/mydatabase', {
     useNewUrlParser: true,
@@ -24,9 +24,10 @@ mongoose.connect('mongodb://localhost:27017/mydatabase', {
     });
 }).catch(err => {
     console.error("MongoDB connection error:", err);
-    console.log('going to exit due to connection error');
+    console.log('Going to exit due to connection error');
     process.exit(1);  // Exit process if MongoDB connection fails
 });
+
 app.use(bodyParser.json());
 app.use(helmet());
 app.use(cors());
@@ -46,6 +47,7 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.REDIRECT_URI
 );
+
 // Token refresh handling
 oauth2Client.on('tokens', (tokens) => {
     if (tokens.refresh_token) {
@@ -76,6 +78,8 @@ app.get('/auth/google/callback', async (req, res) => {
         res.status(500).send('Authentication failed.');
     }
 });
+
+// List events
 app.get('/list-events', (req, res) => {
   if (!req.session.tokens) return res.status(401).send('Authentication required');
   oauth2Client.setCredentials(req.session.tokens);
@@ -89,6 +93,7 @@ app.get('/list-events', (req, res) => {
   });
 });
 
+// Update token
 app.post('/update-token', async (req, res) => {
     const { email, refreshToken } = req.body;
     try {
@@ -97,9 +102,12 @@ app.post('/update-token', async (req, res) => {
     } catch (err) {
       res.status(500).json({ message: 'Failed to update refresh token', error: err.message });
     }
-  });
+});
 
-  app.post('/tasks', async (req, res) => {
+// Task operations
+
+
+app.post('/tasks', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
       // Create the task instance but don't save yet
@@ -135,6 +143,7 @@ app.post('/update-token', async (req, res) => {
       res.status(500).send(error);
     }
   });
+
   app.patch('/tasks/:taskId', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
@@ -174,6 +183,7 @@ app.post('/update-token', async (req, res) => {
       res.status(500).send(error);
     }
   });
+
   app.delete('/tasks/:taskId', async (req, res) => {
     try {
         // Find the task in the database
@@ -202,6 +212,8 @@ app.post('/update-token', async (req, res) => {
         res.status(500).send('Failed to delete task.');
     }
 });
+
+// Error handler
 app.use((err, req, res, next) => {
     if (res.headersSent) {
         return next(err);
@@ -216,9 +228,10 @@ app.use((err, req, res, next) => {
         res.status(500).send({ status: 'error', message: 'An unexpected error occurred!' });
     }
 });
-// for todo list 
+
+// To-Do List operations
 app.post('/items', async (req, res) => {
-    const { name, duration, dueDate } = req.body;
+    const { name, duration, dueDate, priority } = req.body;
 
     if (!name || !duration) {
         return res.status(400).send('Name and duration are required.');
@@ -228,8 +241,8 @@ app.post('/items', async (req, res) => {
         const newItem = new Item({
             name,
             duration,
-            dueDate: dueDate || undefined, 
-            priority// Use undefined to avoid setting the field if not provided
+            dueDate: dueDate || undefined,
+            priority  // Use undefined to avoid setting the field if not provided
         });
 
         await newItem.save();
@@ -239,9 +252,10 @@ app.post('/items', async (req, res) => {
         res.status(500).send('Error adding item to the database.');
     }
 });
+
 app.get('/items', async (req, res) => {
     let query = {};
-    const { search, duration, dueDate,priority } = req.query;
+    const { search, duration, dueDate, priority } = req.query;
 
     if (search) {
         query.name = { $regex: search, $options: 'i' };  // Case-insensitive partial match
@@ -252,86 +266,85 @@ app.get('/items', async (req, res) => {
     if (dueDate) {
         query.dueDate = new Date(dueDate);
     }
-    if(priority){
-      query.priority = priority;
+    if (priority) {
+        query.priority = priority;
     }
 
-   try {
+    try {
         const items = await Item.find(query);
-        if (items.length === 0) {
-            // If there are no items, return an empty array
-            return res.status(200).json([]);
-        }
         res.status(200).json(items);
     } catch (error) {
         console.error('Failed to retrieve items:', error);
         res.status(500).send('Error retrieving items from the database.');
     }
 });
+
+// Schedule tasks
 const scheduleTasks = async () => {
-  const tasks = await Task.find({}).sort({priority: 1, dueDate: 1});  // Sort by priority first
-  const now = new Date();
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const tasks = await Task.find({}).sort({ priority: 1, dueDate: 1 });  // Sort by priority first
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
 
-  const events = await new Promise((resolve, reject) => {
-      listCalendarEvents(oauth2Client, now, end, (err, items) => {
-          if (err) reject(err);
-          else resolve(items);
-      });
-  });
+    const events = await new Promise((resolve, reject) => {
+        listCalendarEvents(oauth2Client, now, end, (err, items) => {
+            if (err) reject(err);
+            else resolve(items);
+        });
+    });
 
-  const freeSlots = findFreeSlots(events, tasks);
-  return freeSlots;
+    const freeSlots = findFreeSlots(events, tasks);
+    return freeSlots;
 };
+
 const findFreeSlots = (events, tasks) => {
-  let slots = [];
-  let availableSlots = calculateAvailableSlots(events);
+    let slots = [];
+    let availableSlots = calculateAvailableSlots(events);
 
-  tasks.forEach(task => {
-      for (let i = 0; i < availableSlots.length; i++) {
-          const slot = availableSlots[i];
-          const slotDuration = (slot.end.getTime() - slot.start.getTime()) / 60000; // Duration in minutes
-          if (slotDuration >= task.duration) {
-              const taskStart = new Date(slot.start);
-              const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
+    tasks.forEach(task => {
+        for (let i = 0; i < availableSlots.length; i++) {
+            const slot = availableSlots[i];
+            const slotDuration = (slot.end.getTime() - slot.start.getTime()) / 60000; // Duration in minutes
+            if (slotDuration >= task.duration) {
+                const taskStart = new Date(slot.start);
+                const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
 
-              slots.push({
-                  taskName: task.name,
-                  priority: task.priority,
-                  start: taskStart,
-                  end: taskEnd
-              });
+                slots.push({
+                    taskName: task.name,
+                    priority: task.priority,
+                    start: taskStart,
+                    end: taskEnd
+                });
 
-              // Update the start time of the current slot to reflect the booked time
-              slot.start = taskEnd;
-              break;  // Found a slot, no need to check further slots for this task
-          }
-      }
-  });
+                // Update the start time of the current slot to reflect the booked time
+                slot.start = taskEnd;
+                break;  // Found a slot, no need to check further slots for this task
+            }
+        }
+    });
 
-  return slots;
+    return slots;
 };
 
 function calculateAvailableSlots(events) {
-  let availableSlots = [];
-  // Calculate slots between events
-  for (let i = 0; i < events.length - 1; i++) {
-      const endCurrent = events[i].end;
-      const startNext = events[i + 1].start;
-      if (endCurrent < startNext) {
-          availableSlots.push({ start: endCurrent, end: startNext });
-      }
-  }
-  // Consider adding slots before the first event and after the last event, as needed
-  return availableSlots;
+    let availableSlots = [];
+    // Calculate slots between events
+    for (let i = 0; i < events.length - 1; i++) {
+        const endCurrent = events[i].end;
+        const startNext = events[i + 1].start;
+        if (endCurrent < startNext) {
+            availableSlots.push({ start: endCurrent, end: startNext });
+        }
+    }
+    // Consider adding slots before the first event and after the last event, as needed
+    return availableSlots;
 }
 
 app.get('/optimize-schedule', async (req, res) => {
-  try {
-      const scheduledTasks = await scheduleTasks();
-      res.json({status: 'success', scheduledTasks});
-  } catch (error) {
-      console.error('Scheduling error:', error);
-      res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
-  }
+    try {
+        const scheduledTasks = await scheduleTasks();
+        res.json({ status: 'success', scheduledTasks });
+    } catch (error) {
+        console.error('Scheduling error:', error);
+        res.status(500).send({ status: 'error', message: 'Unable to optimize schedule due to internal error.' });
+    }
 });

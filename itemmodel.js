@@ -1,24 +1,15 @@
+const mongoose = require('mongoose');
 
+// Define the schema for the Item model
 const itemSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true
-    },
-    duration: {
-        type: Number,
-        required: true,
-        min: 1  // Duration in minutes, must be at least 1 minute
-    },
-    dueDate: {
-        type: Date,
-        default: null  // Optional due date
-    },
-    priority: {
-        type: Number,
-        default: 0
-    }
+    name: String,
+    duration: Number,
+    dueDate: Date,
+    priority: Number  // Assuming priority is a string, you can change the type if needed
 });
 
+// Create the Item model
 const Item = mongoose.model('Item', itemSchema);
 
+// Export the Item model so it can be used in other files
 module.exports = Item;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { View, Text, TextInput, Button, StyleSheet, Modal, ScrollView, Pressable, Picker } from 'react-native';
+import { View, Text, TextInput, Button, StyleSheet, Modal, ScrollView, TouchableOpacity, Picker } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
 function TaskForm({ onSubmit }) {
@@ -17,24 +17,23 @@ function TaskForm({ onSubmit }) {
 
   const fetchTasks = async () => {
     try {
-     
-      const response = await axios.get('http://localhost:3000/items');
-      console.log("The URL is correct");
-  
-      if (response.data.length === 0) {
-        console.log("No tasks available.");
-        // Handle the case when there are no tasks available
-        // For example, you can set an empty array to tasks state
-        setTasks([]);
-      } else {
-        // Assuming the response body directly contains the tasks array
-        setTasks(response.data);
-      }
+      const response = await axios.get('http://localhost:3000/items'); // Ensure the URL is correct and the server is running
+      console.log("The url is correct");
+      setTasks(response.data); // Assuming the response body directly contains the tasks array
     } catch (error) {
       console.error('Error fetching tasks:', error);
     }
   };
-  
+
+  const optimizeTasks = async () => {
+    try {
+      const response = await axios.get('http://localhost:3000/optimize-schedule');
+      console.log('Optimized tasks:', response.data);
+      // Handle the optimized tasks as needed, for example, updating the state or displaying them
+    } catch (error) {
+      console.error('Error optimizing tasks:', error);
+    }
+  };
 
   const handleSubmit = async () => {
     const duration = parseInt(hours) * 60 + parseInt(minutes);  // Calculate total duration in minutes
@@ -68,11 +67,11 @@ function TaskForm({ onSubmit }) {
           <Text key={index}>{task.name} - {task.type} - Duration: {task.duration} minutes</Text>
         ))}
       </ScrollView>
-      <Pressable onPress={() => setModalVisible(true)} style={styles.addButton}>
+      <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.addButton}>
         <Icon name="plus" size={15} color="#fff" />
         <Text style={styles.addButtonText}>Add Task</Text>
-      </Pressable>
-      <Button title="Optimize Tasks" onPress={onSubmit} />
+      </TouchableOpacity>
+      <Button title="Optimize Tasks" onPress={optimizeTasks} />
 
       <Modal
         animationType="slide"
@@ -143,13 +142,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 35,
     alignItems: "center",
-    boxShadowColor: "#000",
-    boxShadowOffset: {
+    shadowColor: "#000",
+    shadowOffset: {
       width: 0,
       height: 2
     },
-    boxShadowOpacity: 0.25,
-    boxShadowRadius: 4,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
     elevation: 5
   },
   input: {
