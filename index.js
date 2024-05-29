@@ -19,15 +19,12 @@ mongoose.connect('mongodb://localhost:27017/mydatabase', {
     useUnifiedTopology: true
 }).then(() => {
     console.log("MongoDB connected");
-    app.get('/', (req, res) => {
-        res.send('Welcome to the homepage!');
-    });
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
 }).catch(err => {
     console.error("MongoDB connection error:", err);
-    console.log('going to exit due to connection error');
+    console.log('Exiting due to connection error');
     process.exit(1);  // Exit process if MongoDB connection fails
 });
 
@@ -370,6 +367,9 @@ const scheduleTasks = async () => {
             });
         });
 
+        // Sort tasks by duration (shortest to longest)
+        tasks.sort((a, b) => a.duration - b.duration);
+
         const freeSlots = findFreeSlots(events, tasks);
         console.log("Free slots calculated:", freeSlots);
         return freeSlots;
@@ -433,4 +433,3 @@ app.get('/optimize-schedule', async (req, res) => {
         res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
 });
-

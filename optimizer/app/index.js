@@ -10,6 +10,7 @@ function TaskForm({ onSubmit }) {
   const [minutes, setMinutes] = useState(0);  // For selecting minutes
   const [taskType, setTaskType] = useState('daily');
   const [tasks, setTasks] = useState([]); // State to store tasks
+  const [scheduledTasks, setScheduledTasks] = useState([]); // State to store scheduled tasks
 
   useEffect(() => {
     fetchTasks();
@@ -29,9 +30,25 @@ function TaskForm({ onSubmit }) {
     try {
       const response = await axios.get('http://localhost:3000/optimize-schedule');
       console.log('Optimized tasks:', response.data);
-      // Handle the optimized tasks as needed, for example, updating the state or displaying them
+      setScheduledTasks(response.data.scheduledTasks); // Update state with optimized tasks
     } catch (error) {
       console.error('Error optimizing tasks:', error);
+    }
+  };
+
+  const addToCalendar = async () => {
+    try {
+      for (let task of scheduledTasks) {
+        const response = await axios.post('http://localhost:3000/tasks', {
+          title: task.taskName,
+          description: task.taskName,
+          duration: (task.end - task.start) / 60000,
+          dueDate: task.start
+        });
+        console.log('Task added to calendar:', response.data);
+      }
+    } catch (error) {
+      console.error('Failed to add task to calendar:', error);
     }
   };
 
@@ -72,6 +89,14 @@ function TaskForm({ onSubmit }) {
         <Text style={styles.addButtonText}>Add Task</Text>
       </TouchableOpacity>
       <Button title="Optimize Tasks" onPress={optimizeTasks} />
+      <Button title="Add to Calendar" onPress={addToCalendar} />
+
+      <Text style={styles.title}>Scheduled Tasks</Text>
+      <ScrollView style={styles.taskList}>
+        {scheduledTasks.map((task, index) => (
+          <Text key={index}>{task.taskName} - Start: {task.start.toLocaleString()} - End: {task.end.toLocaleString()}</Text>
+        ))}
+      </ScrollView>
 
       <Modal
         animationType="slide"
