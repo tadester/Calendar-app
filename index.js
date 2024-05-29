@@ -7,7 +7,9 @@ const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 require('dotenv').config({ path: './cal.env' });
-const Task = require('./itemmodel');  // Corrected the file name
+const itemService = require('./itemservice');
+const taskService = require('./taskservice');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -24,7 +26,7 @@ mongoose.connect('mongodb://localhost:27017/mydatabase', {
     });
 }).catch(err => {
     console.error("MongoDB connection error:", err);
-    console.log('Going to exit due to connection error');
+    console.log('going to exit due to connection error');
     process.exit(1);  // Exit process if MongoDB connection fails
 });
 
@@ -47,7 +49,6 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.REDIRECT_URI
 );
-
 // Token refresh handling
 oauth2Client.on('tokens', (tokens) => {
     if (tokens.refresh_token) {
@@ -79,122 +80,112 @@ app.get('/auth/google/callback', async (req, res) => {
     }
 });
 
-// List events
 app.get('/list-events', (req, res) => {
-  if (!req.session.tokens) return res.status(401).send('Authentication required');
-  oauth2Client.setCredentials(req.session.tokens);
+    if (!req.session.tokens) return res.status(401).send('Authentication required');
+    oauth2Client.setCredentials(req.session.tokens);
 
-  calendarAPI.listCalendarEvents(oauth2Client, (err, events) => {
-    if (err) {
-      res.status(500).send('Failed to retrieve events');
-    } else {
-      res.status(200).json(events);
-    }
-  });
+    listCalendarEvents(oauth2Client, new Date(), new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), (err, events) => {
+        if (err) {
+            res.status(500).send('Failed to retrieve events');
+        } else {
+            res.status(200).json(events);
+        }
+    });
 });
 
-// Update token
 app.post('/update-token', async (req, res) => {
     const { email, refreshToken } = req.body;
     try {
-      const user = await userservice.storeOrUpdateUser(email, refreshToken);
-      res.status(200).json({ message: 'Refresh token updated', user });
+        const user = await userservice.storeOrUpdateUser(email, refreshToken);
+        res.status(200).json({ message: 'Refresh token updated', user });
     } catch (err) {
-      res.status(500).json({ message: 'Failed to update refresh token', error: err.message });
+        res.status(500).json({ message: 'Failed to update refresh token', error: err.message });
     }
 });
-
-// Task operations
-
 
 app.post('/tasks', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
-      // Create the task instance but don't save yet
-      const newTask = new Task({ title, description, duration, dueDate });
-  
-      // Define the calendar event
-      const event = {
-        summary: title,
-        description: description,
-        start: {
-          dateTime: new Date(dueDate).toISOString(),
-          timeZone: 'America/New_York',
-        },
-        end: {
-          dateTime: new Date(new Date(dueDate).getTime() + duration * 60000).toISOString(),
-          timeZone: 'America/New_York',
-        }
-      };
-  
-      // Insert the event into Google Calendar
-      const createdEvent = await calendar.events.insert({
-        calendarId: 'primary',
-        resource: event,
-      });
-  
-      // Store the Google Event ID in the task object
-      newTask.googleEventId = createdEvent.data.id;
-      await newTask.save();
-  
-      res.status(201).send({ task: newTask, googleEventId: createdEvent.data.id });
-    } catch (error) {
-      console.error('Failed to create task and calendar event:', error);
-      res.status(500).send(error);
-    }
-  });
+        const event = {
+            summary: title,
+            description: description,
+            start: {
+                dateTime: new Date(dueDate).toISOString(),
+                timeZone: 'America/New_York',
+            },
+            end: {
+                dateTime: new Date(new Date(dueDate).getTime() + duration * 60000).toISOString(),
+                timeZone: 'America/New_York',
+            }
+        };
 
-  app.patch('/tasks/:taskId', async (req, res) => {
+        // Insert the event into Google Calendar
+        const createdEvent = await google.calendar({version: 'v3', auth: oauth2Client}).events.insert({
+            calendarId: 'primary',
+            resource: event,
+        });
+
+        // Store the Google Event ID in the task object
+        const newTask = await taskService.createOrUpdateTask(title, description, duration, dueDate, createdEvent.data.id);
+
+        res.status(201).send({ task: newTask, googleEventId: createdEvent.data.id });
+    } catch (error) {
+        console.error('Failed to create task and calendar event:', error);
+        res.status(500).send(error);
+    }
+});
+
+app.patch('/tasks/:taskId', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
-      const task = await Task.findById(req.params.taskId);
-      if (!task) {
-        return res.status(404).send('Task not found');
-      }
-  
-      // Update the task details
-      task.title = title;
-      task.description = description;
-      task.duration = duration;
-      task.dueDate = dueDate;
-      await task.save();
-  
-      // Update the Google Calendar event using the stored event ID
-      const updatedEvent = await calendar.events.update({
-        calendarId: 'primary',
-        eventId: task.googleEventId,
-        resource: {
-          summary: title,
-          description: description,
-          start: {
-            dateTime: new Date(dueDate).toISOString(),
-            timeZone: 'America/New_York',
-          },
-          end: {
-            dateTime: new Date(new Date(dueDate).getTime() + duration * 60000).toISOString(),
-            timeZone: 'America/New_York',
-          }
+        const task = await taskService.getTask(req.params.taskId);
+        if (!task) {
+            return res.status(404).send('Task not found');
         }
-      });
-  
-      res.send({ task, updatedEvent: updatedEvent.data });
-    } catch (error) {
-      console.error('Error updating task and calendar event:', error);
-      res.status(500).send(error);
-    }
-  });
 
-  app.delete('/tasks/:taskId', async (req, res) => {
+        // Update the task details
+        task.title = title;
+        task.description = description;
+        task.duration = duration;
+        task.dueDate = dueDate;
+        await task.save();
+
+        // Update the Google Calendar event using the stored event ID
+        const updatedEvent = await google.calendar({version: 'v3', auth: oauth2Client}).events.update({
+            calendarId: 'primary',
+            eventId: task.googleEventId,
+            resource: {
+                summary: title,
+                description: description,
+                start: {
+                    dateTime: new Date(dueDate).toISOString(),
+                    timeZone: 'America/New_York',
+                },
+                end: {
+                    dateTime: new Date(new Date(dueDate).getTime() + duration * 60000).toISOString(),
+                    timeZone: 'America/New_York',
+                }
+            }
+        });
+
+        res.send({ task, updatedEvent: updatedEvent.data });
+    } catch (error) {
+        console.error('Error updating task and calendar event:', error);
+        res.status(500).send(error);
+    }
+});
+
+app.delete('/tasks/:taskId', async (req, res) => {
     try {
         // Find the task in the database
-        const task = await Task.findById(req.params.taskId);
+        const task = await taskService.getTask(req.params.taskId);
         if (!task) {
             return res.status(404).send('Task not found.');
         }
 
         // Delete the event from Google Calendar
         try {
-            await calendar.events.delete({
+            await google.calendar({version: 'v3', auth: oauth2Client}).events.delete({
                 calendarId: 'primary',
                 eventId: task.googleEventId,  // Use the stored Google Event ID to identify the event
             });
@@ -205,7 +196,7 @@ app.post('/tasks', async (req, res) => {
         }
 
         // Delete the task from MongoDB
-        await task.remove();
+        await taskService.deleteTask(req.params.taskId);
         res.status(204).send('Task and associated calendar event deleted successfully.');
     } catch (error) {
         console.error('Failed to delete task:', error);
@@ -213,7 +204,6 @@ app.post('/tasks', async (req, res) => {
     }
 });
 
-// Error handler
 app.use((err, req, res, next) => {
     if (res.headersSent) {
         return next(err);
@@ -229,7 +219,7 @@ app.use((err, req, res, next) => {
     }
 });
 
-// To-Do List operations
+// for todo list 
 app.post('/items', async (req, res) => {
     const { name, duration, dueDate, priority } = req.body;
 
@@ -238,14 +228,7 @@ app.post('/items', async (req, res) => {
     }
 
     try {
-        const newItem = new Item({
-            name,
-            duration,
-            dueDate: dueDate || undefined,
-            priority  // Use undefined to avoid setting the field if not provided
-        });
-
-        await newItem.save();
+        const newItem = await itemService.storeOrUpdateItem(name, duration, dueDate, priority);
         res.status(201).send({ message: 'Item added successfully', item: newItem });
     } catch (error) {
         console.error('Failed to add new item:', error);
@@ -266,12 +249,16 @@ app.get('/items', async (req, res) => {
     if (dueDate) {
         query.dueDate = new Date(dueDate);
     }
-    if (priority) {
+    if (priority){
         query.priority = priority;
     }
 
     try {
-        const items = await Item.find(query);
+        const items = await itemService.getAllItems(query);
+        if (items.length === 0) {
+            // If there are no items, return an empty array
+            return res.status(200).json([]);
+        }
         res.status(200).json(items);
     } catch (error) {
         console.error('Failed to retrieve items:', error);
@@ -279,9 +266,8 @@ app.get('/items', async (req, res) => {
     }
 });
 
-// Schedule tasks
 const scheduleTasks = async () => {
-    const tasks = await Task.find({}).sort({ priority: 1, dueDate: 1 });  // Sort by priority first
+    const tasks = await taskService.getAllTasks();
     const now = new Date();
     const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
 
@@ -309,7 +295,7 @@ const findFreeSlots = (events, tasks) => {
                 const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
 
                 slots.push({
-                    taskName: task.name,
+                    taskName: task.title,
                     priority: task.priority,
                     start: taskStart,
                     end: taskEnd
@@ -342,9 +328,9 @@ function calculateAvailableSlots(events) {
 app.get('/optimize-schedule', async (req, res) => {
     try {
         const scheduledTasks = await scheduleTasks();
-        res.json({ status: 'success', scheduledTasks });
+        res.json({status: 'success', scheduledTasks});
     } catch (error) {
         console.error('Scheduling error:', error);
-        res.status(500).send({ status: 'error', message: 'Unable to optimize schedule due to internal error.' });
+        res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
 });

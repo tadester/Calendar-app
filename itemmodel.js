@@ -5,7 +5,7 @@ const itemSchema = new mongoose.Schema({
     name: String,
     duration: Number,
     dueDate: Date,
-    priority: Number  // Assuming priority is a string, you can change the type if needed
+    priority: String  // Assuming priority is a string, you can change the type if needed
 });
 
 // Create the Item model
