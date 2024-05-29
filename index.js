@@ -9,6 +9,7 @@ const cors = require('cors');
 require('dotenv').config({ path: './cal.env' });
 const itemService = require('./itemservice');
 const taskService = require('./taskservice');
+const userService = require('./userservice');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,7 +20,7 @@ mongoose.connect('mongodb://localhost:27017/mydatabase', {
 }).then(() => {
     console.log("MongoDB connected");
     app.get('/', (req, res) => {
-      res.send('Welcome to the homepage!');
+        res.send('Welcome to the homepage!');
     });
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
@@ -36,9 +37,10 @@ app.use(cors());
 app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: false,
-    cookie: { secure: true }  // Use secure cookies
+    saveUninitialized: true,  // Allow saving uninitialized session to make sure it persists
+    cookie: { secure: false, maxAge: 60000 }  // Use secure: false for local development
 }));
+
 app.use(rateLimit({
     windowMs: 15 * 60 * 1000,  // 15 minutes
     max: 100  // limit each IP to 100 requests per windowMs
@@ -49,11 +51,12 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.REDIRECT_URI
 );
+
 // Token refresh handling
 oauth2Client.on('tokens', (tokens) => {
     if (tokens.refresh_token) {
         console.log("New refresh token:", tokens.refresh_token);
-        // Update the stored refresh token here
+        // Here you might want to store the refresh token in the database
     }
     console.log("New access token:", tokens.access_token);
 });
@@ -71,21 +74,53 @@ app.get('/auth/google', (req, res) => {
 app.get('/auth/google/callback', async (req, res) => {
     try {
         const { tokens } = await oauth2Client.getToken(req.query.code);
+        console.log("Tokens received from Google:", tokens);
         oauth2Client.setCredentials(tokens);
+
+        // Save tokens in the session
         req.session.tokens = tokens;
-        res.redirect('/welcome');
+        req.session.save((err) => {
+            if (err) {
+                console.error("Session save error:", err);
+                return res.status(500).send('Failed to save session.');
+            }
+            console.log("Tokens successfully saved in session:", req.session.tokens);
+            res.redirect('/welcome');
+        });
     } catch (error) {
         console.error('Error during Google OAuth callback:', error);
         res.status(500).send('Authentication failed.');
     }
 });
 
+// Middleware to log session details
+app.use((req, res, next) => {
+    console.log("Session ID:", req.sessionID);
+    console.log("Session data:", req.session);
+    next();
+});
+
+// Middleware to set credentials for each request
+app.use((req, res, next) => {
+    if (req.session.tokens) {
+        console.log("Setting OAuth2 client credentials from session:", req.session.tokens);
+        oauth2Client.setCredentials(req.session.tokens);
+    } else {
+        console.log("No tokens found in session");
+    }
+    next();
+});
+
 app.get('/list-events', (req, res) => {
-    if (!req.session.tokens) return res.status(401).send('Authentication required');
+    if (!req.session.tokens) {
+        console.log("No tokens found in session for /list-events");
+        return res.status(401).send('Authentication required');
+    }
     oauth2Client.setCredentials(req.session.tokens);
 
     listCalendarEvents(oauth2Client, new Date(), new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), (err, events) => {
         if (err) {
+            console.log("Error listing calendar events:", err);
             res.status(500).send('Failed to retrieve events');
         } else {
             res.status(200).json(events);
@@ -93,10 +128,40 @@ app.get('/list-events', (req, res) => {
     });
 });
 
+// Define the function to list calendar events
+const listCalendarEvents = (auth, start, end, callback) => {
+    const calendar = google.calendar({ version: 'v3', auth });
+    calendar.events.list({
+        calendarId: 'primary',
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        maxResults: 10,
+        singleEvents: true,
+        orderBy: 'startTime',
+    }, (err, res) => {
+        if (err) {
+            console.error('The API returned an error:', err);
+            return callback(err, null);
+        }
+        const events = res.data.items;
+        if (events.length) {
+            console.log('Upcoming 10 events:');
+            events.map((event, i) => {
+                const start = event.start.dateTime || event.start.date;
+                console.log(`${start} - ${event.summary}`);
+            });
+            callback(null, events);
+        } else {
+            console.log('No upcoming events found.');
+            callback(null, []);
+        }
+    });
+};
+
 app.post('/update-token', async (req, res) => {
     const { email, refreshToken } = req.body;
     try {
-        const user = await userservice.storeOrUpdateUser(email, refreshToken);
+        const user = await userService.storeOrUpdateUser(email, refreshToken);
         res.status(200).json({ message: 'Refresh token updated', user });
     } catch (err) {
         res.status(500).json({ message: 'Failed to update refresh token', error: err.message });
@@ -106,6 +171,12 @@ app.post('/update-token', async (req, res) => {
 app.post('/tasks', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
+        if (!req.session.tokens) {
+            console.log("No tokens found in session for /tasks");
+            return res.status(401).send('Authentication required');
+        }
+        oauth2Client.setCredentials(req.session.tokens);
+
         const event = {
             summary: title,
             description: description,
@@ -120,7 +191,7 @@ app.post('/tasks', async (req, res) => {
         };
 
         // Insert the event into Google Calendar
-        const createdEvent = await google.calendar({version: 'v3', auth: oauth2Client}).events.insert({
+        const createdEvent = await google.calendar({ version: 'v3', auth: oauth2Client }).events.insert({
             calendarId: 'primary',
             resource: event,
         });
@@ -138,6 +209,12 @@ app.post('/tasks', async (req, res) => {
 app.patch('/tasks/:taskId', async (req, res) => {
     const { title, description, duration, dueDate } = req.body;
     try {
+        if (!req.session.tokens) {
+            console.log("No tokens found in session for /tasks");
+            return res.status(401).send('Authentication required');
+        }
+        oauth2Client.setCredentials(req.session.tokens);
+
         const task = await taskService.getTask(req.params.taskId);
         if (!task) {
             return res.status(404).send('Task not found');
@@ -151,7 +228,7 @@ app.patch('/tasks/:taskId', async (req, res) => {
         await task.save();
 
         // Update the Google Calendar event using the stored event ID
-        const updatedEvent = await google.calendar({version: 'v3', auth: oauth2Client}).events.update({
+        const updatedEvent = await google.calendar({ version: 'v3', auth: oauth2Client }).events.update({
             calendarId: 'primary',
             eventId: task.googleEventId,
             resource: {
@@ -177,6 +254,12 @@ app.patch('/tasks/:taskId', async (req, res) => {
 
 app.delete('/tasks/:taskId', async (req, res) => {
     try {
+        if (!req.session.tokens) {
+            console.log("No tokens found in session for /tasks");
+            return res.status(401).send('Authentication required');
+        }
+        oauth2Client.setCredentials(req.session.tokens);
+
         // Find the task in the database
         const task = await taskService.getTask(req.params.taskId);
         if (!task) {
@@ -185,7 +268,7 @@ app.delete('/tasks/:taskId', async (req, res) => {
 
         // Delete the event from Google Calendar
         try {
-            await google.calendar({version: 'v3', auth: oauth2Client}).events.delete({
+            await google.calendar({ version: 'v3', auth: oauth2Client }).events.delete({
                 calendarId: 'primary',
                 eventId: task.googleEventId,  // Use the stored Google Event ID to identify the event
             });
@@ -267,19 +350,30 @@ app.get('/items', async (req, res) => {
 });
 
 const scheduleTasks = async () => {
-    const tasks = await taskService.getAllTasks();
-    const now = new Date();
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    try {
+        const tasks = await taskService.getAllTasks();
+        console.log("Tasks retrieved:", tasks);
+        const now = new Date();
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
 
-    const events = await new Promise((resolve, reject) => {
-        listCalendarEvents(oauth2Client, now, end, (err, items) => {
-            if (err) reject(err);
-            else resolve(items);
+        const events = await new Promise((resolve, reject) => {
+            listCalendarEvents(oauth2Client, now, end, (err, items) => {
+                if (err) {
+                    console.error("Error listing calendar events:", err);
+                    reject(err);
+                } else {
+                    resolve(items);
+                }
+            });
         });
-    });
 
-    const freeSlots = findFreeSlots(events, tasks);
-    return freeSlots;
+        const freeSlots = findFreeSlots(events, tasks);
+        console.log("Free slots calculated:", freeSlots);
+        return freeSlots;
+    } catch (error) {
+        console.error("Error in scheduleTasks:", error);
+        throw error;
+    }
 };
 
 const findFreeSlots = (events, tasks) => {
@@ -315,8 +409,8 @@ function calculateAvailableSlots(events) {
     let availableSlots = [];
     // Calculate slots between events
     for (let i = 0; i < events.length - 1; i++) {
-        const endCurrent = events[i].end;
-        const startNext = events[i + 1].start;
+        const endCurrent = new Date(events[i].end.dateTime || events[i].end.date);
+        const startNext = new Date(events[i + 1].start.dateTime || events[i + 1].start.date);
         if (endCurrent < startNext) {
             availableSlots.push({ start: endCurrent, end: startNext });
         }
@@ -327,10 +421,13 @@ function calculateAvailableSlots(events) {
 
 app.get('/optimize-schedule', async (req, res) => {
     try {
+        console.log("Request received at /optimize-schedule");
         const scheduledTasks = await scheduleTasks();
+        console.log("Scheduled tasks:", scheduledTasks);
         res.json({status: 'success', scheduledTasks});
     } catch (error) {
         console.error('Scheduling error:', error);
         res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
 });
+

@@ -2,50 +2,46 @@ const Task = require('./taskmodel');
 
 const createOrUpdateTask = async (title, description, duration, dueDate, googleEventId) => {
     try {
-        const updatedTask = await Task.findOneAndUpdate(
-            { title: title },
-            { description: description, duration: duration, dueDate: dueDate, googleEventId: googleEventId },
+        const task = await Task.findOneAndUpdate(
+            { title },
+            { title, description, duration, dueDate, googleEventId },
             { new: true, upsert: true }
         );
-        console.log('Task updated or inserted:', updatedTask);
-        return updatedTask;
+        return task;
     } catch (err) {
-        console.error('Error updating or inserting Task:', err);
+        console.error('Error updating or inserting task:', err);
     }
 };
 
-const getTask = async (id) => {
+const getTask = async (taskId) => {
     try {
-        const task = await Task.findById(id);
-        return task;
+        return await Task.findById(taskId);
     } catch (err) {
         console.error('Error retrieving task:', err);
         return null;
     }
 };
 
-const deleteTask = async (id) => {
+const getAllTasks = async () => {
     try {
-        await Task.findByIdAndDelete(id);
-        console.log('Task deleted');
+        return await Task.find({});
     } catch (err) {
-        console.error('Error deleting task:', err);
+        console.error('Error retrieving all tasks:', err);
+        return [];
     }
 };
 
-const getAllTasks = async () => {
+const deleteTask = async (taskId) => {
     try {
-        const tasks = await Task.find({});
-        return tasks;
+        await Task.findByIdAndDelete(taskId);
     } catch (err) {
-        console.error('Error retrieving tasks:', err);
-        return [];
+        console.error('Error deleting task:', err);
     }
 };
 
 module.exports = {
     createOrUpdateTask,
     getTask,
-    deleteTask,
-    getAllTasks
+    getAllTasks,
+    deleteTask
 };
