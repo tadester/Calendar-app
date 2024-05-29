@@ -67,11 +67,13 @@ app.get('/auth/google', (req, res) => {
         access_type: 'offline',
         scope: ['https://www.googleapis.com/auth/calendar', 'profile', 'email']
     });
+    console.log("Generated auth URL:", url);
     res.redirect(url);
 });
 
 // OAuth2 callback
 app.get('/auth/google/callback', async (req, res) => {
+    console.log("Received authorization code:", req.query.code);
     try {
         const { tokens } = await oauth2Client.getToken(req.query.code);
         console.log("Tokens received from Google:", tokens);
@@ -79,6 +81,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
         // Save tokens in the session
         req.session.tokens = tokens;
+        console.log("Tokens set in session, saving session...");
         req.session.save((err) => {
             if (err) {
                 console.error("Session save error:", err);
@@ -430,4 +433,3 @@ app.get('/optimize-schedule', async (req, res) => {
         res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
 });
-
