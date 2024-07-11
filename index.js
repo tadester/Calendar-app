@@ -135,7 +135,7 @@ const listCalendarEvents = (auth, start, end, callback) => {
         calendarId: 'primary',
         timeMin: start.toISOString(),
         timeMax: end.toISOString(),
-        maxResults: 10,
+        maxResults: 100,  // Increase to fetch more events
         singleEvents: true,
         orderBy: 'startTime',
     }, (err, res) => {
@@ -145,7 +145,7 @@ const listCalendarEvents = (auth, start, end, callback) => {
         }
         const events = res.data.items;
         if (events.length) {
-            console.log('Upcoming 10 events:');
+            console.log('Upcoming events:');
             events.map((event, i) => {
                 const start = event.start.dateTime || event.start.date;
                 console.log(`${start} - ${event.summary}`);
@@ -351,7 +351,9 @@ app.get('/items', async (req, res) => {
 
 const scheduleTasks = async () => {
     try {
+        const items = await itemService.getAllItems({});
         const tasks = await taskService.getAllTasks();
+        console.log("Items retrieved:", items);
         console.log("Tasks retrieved:", tasks);
         const now = new Date();
         const end = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
@@ -367,10 +369,10 @@ const scheduleTasks = async () => {
             });
         });
 
-        // Sort tasks by duration (shortest to longest)
-        tasks.sort((a, b) => a.duration - b.duration);
+        // Combine items and tasks, and sort by duration (shortest to longest)
+        const allTasks = [...items, ...tasks].sort((a, b) => a.duration - b.duration);
 
-        const freeSlots = findFreeSlots(events, tasks);
+        const freeSlots = findFreeSlots(events, allTasks);
         console.log("Free slots calculated:", freeSlots);
         return freeSlots;
     } catch (error) {
@@ -392,7 +394,7 @@ const findFreeSlots = (events, tasks) => {
                 const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
 
                 slots.push({
-                    taskName: task.title,
+                    taskName: task.title || task.name, // use title if available, else use name
                     priority: task.priority,
                     start: taskStart,
                     end: taskEnd
@@ -432,4 +434,8 @@ app.get('/optimize-schedule', async (req, res) => {
         console.error('Scheduling error:', error);
         res.status(500).send({status: 'error', message: 'Unable to optimize schedule due to internal error.'});
     }
+});
+
+app.get('/welcome', (req, res) => {
+    res.send('Welcome! You are authenticated.');
 });
